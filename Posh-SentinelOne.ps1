@@ -84,7 +84,13 @@ class S1API {
 
         return $response.data
     }
-
+    
+    # Initial call to get an S1Agent
+    # all subsequent actions happen from the Agent object
+    [System.Object]GetAgent([String]$AgentName) {
+        $agent = [S1Agent]::new($this, $this.Get('/web/api/v2.0/agents?computerName='+$AgentName))
+        return $agent
+    }
 }
 
 
