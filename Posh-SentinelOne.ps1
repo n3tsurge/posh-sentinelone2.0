@@ -5,6 +5,7 @@ class S1API {
 
     [String]$URL;
     [String]$ApiKey;
+    [String]$Token;
     [String]$Proxy=$null;
     [Hashtable]$Headers = @{};
     [Boolean]$ProxyUseDefaultCredentials=$false;
@@ -14,6 +15,7 @@ class S1API {
     S1API ([String]$URL, [String]$APIKey) {
         $this.URL = $URL
         $this.APIKey = $APIKey
+        $this.Token = $null
         $this.Proxy = $null
 
         $this.RequestParams.Add('Uri', $URL)
@@ -27,6 +29,29 @@ class S1API {
         }
 
         $this.RequestParams.Add('Headers', $this.Headers)
+
+    }
+
+    # Performs a user based authentication against the API
+    # Definitely don't recommend using this method ever
+    # TODO: Make this work...SECURELY
+    [void]Login([String]$Username, [String]$Password) {
+
+        $body = @{
+            "username"=$Username;
+            "password"=$Password;
+        }
+        
+        $results = $this.Post('/web/api/v2.0/users/login', ($body | ConvertTo-Json))
+
+        Write-Host $results
+
+        if($results) {
+            $this.Token = $results.token
+            $this.Headers.Add("Authorization", "Token "+$this.Token)
+        } else {
+            raise ValueError("Authentication Failed")
+        }
 
     }
 
@@ -48,12 +73,10 @@ class S1API {
 
         # Clone the Request Parameters so they can be unfurled
         $params = $this.RequestParams
+
+        Write-Host @params
        
         $response = try { Invoke-RestMethod @params } catch { $null }
-
-        #Write-Host $response.data
-
-        
         
         # If the API wants to paginate, let it 
         if($response.pagination) 
@@ -336,8 +359,6 @@ class S1Threat {
             return $null
         }
     }
-
-
 }
 
 
@@ -529,7 +550,9 @@ class S1Agent {
 
 }
 
-
+<#
+The SentinelOne User Object, gets fed User data
+#>
 class S1User {
     
     [System.Object]$Data;
@@ -606,11 +629,6 @@ class S1User {
     }
 }
 
-$s1 = [S1API]::new("", "")
-$s1.Proxy = "http://192.168.150.148:8080"
-$s1.ProxyUseDefaultCredentials = $true
-
-
 <# START CMDLETS #>
 
 <#
@@ -659,13 +677,21 @@ function Get-S1Users () {
 }
 
 
+
+$s1 = [S1API]::new("", "")
+$s1.Proxy = "http://192.168.150.148:8080"
+$s1.ProxyUseDefaultCredentials = $true
+
 #Get-S1Agent -AgentName fatboy | ft computerName, lastLoggedInUserName, infected
 #(Get-S1Agent -AgentName DESKTOP-E42ET4I).AbortSc
 #(Get-S1Threats).Unquarantine()
 #(Get-S1Threat -ThreatID 417498202662931194).ForensicsExport('json')
 $user = Get-S1Users
+$user
 
 
+
+# TODO: Test multiple agents being returned by Get-S1Agent or Get-S1Agents
 # TODO: API Token Storage
 # TODO: API Token Inline Calls
 # TODO: Username & Password Token
