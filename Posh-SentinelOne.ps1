@@ -73,8 +73,6 @@ class S1API {
 
         # Clone the Request Parameters so they can be unfurled
         $params = $this.RequestParams
-
-        Write-Host @params
        
         $response = try { Invoke-RestMethod @params } catch { $null }
         
