@@ -45,17 +45,23 @@ class S1API {
             $this.RequestParams.ProxyUseDefaultCredentials = $true
         }
 
+        # Clone the Request Parameters so they can be unfurled
         $params = $this.RequestParams
-
         
         $response = Invoke-RestMethod @params
 
+        # Consolidate the returned data in $data so it can be appended in the event
+        # of pagination
         $data = $response.data
         
-        While($response.pagination.nextCursor) {
-            $this.RequestParams.Uri += "&cursor="+$response.pagination.nextCursor
-            $response = Invoke-RestMethod @params
-            $data += $response.data
+        # If the API wants to paginate, let it 
+        if($response.pagination) 
+        {
+                While($data.Count -ne $response.pagination.totalItems) {
+                            $this.RequestParams.Uri += "&cursor="+$response.pagination.nextCursor
+                $response = Invoke-RestMethod @params
+                $data += $response.data
+            }
         }
 
         return $data
@@ -76,9 +82,8 @@ class S1API {
             $this.RequestParams.ProxyUseDefaultCredentials = $true
         }
         
+        # Clone the Request Parameters so they can be unfurled
         $params = $this.RequestParams
-
-        Write-Host @params
 
         $response = Invoke-RestMethod @params
 
@@ -91,9 +96,45 @@ class S1API {
         $agent = [S1Agent]::new($this, $this.Get('/web/api/v2.0/agents?computerName='+$AgentName))
         return $agent
     }
+
+    # TODO: Powershell 5 doesn't support optional function parameters
+    [System.Object]GetAgents([String]$AgentName, [Int]$Limit,[Boolean]$Infected) {
+
+        $agents = $this.Get('/web/api/v2.0/agents?limit={0:d0}&infected={1}&computerName__like={2}' -f ($Limit,$Infected,$AgentName))
+        
+        # If there are no agents, return an empty Hashtable
+        if(!$agents) {
+            return $null
+        }
+
+        # Cast all the returned agents as S1Agent objects
+        $agents = $agents | % {
+            [S1Agent]::new($s1, $_)
+        }
+        return $agents
+    }
+
+    [System.Object]GetThreats([Boolean]$Resolved) {
+
+        $threats = $this.Get('/web/api/v2.0/threats')
+
+        if(!$threats) {
+            return $null
+        }
+
+        # Cast all the returned threats as S1Threat objects
+        $threats = $threats | % {
+            [S1Threat]::new($s1, $_)
+        }
+        return $threats
+    }
+    
 }
 
 
+<#
+The SentinelOne Threat object, gets fed threat data
+#>
 class S1Threat {
 
     [System.Object]$Data;
@@ -112,6 +153,63 @@ class S1Threat {
 
         $this.s1 = $s1
     }
+
+    # Marks the threat as Benign
+    # /apidoc/#!/Threats/post_web_api_v2_0_threats_mark_as_benign
+    [boolean]MarkAsBenign() {
+        $body = @{
+            "filter" = @{
+                "ids" = @($this.id);
+                "contentHash"=$this.fileContentHash;
+            }
+        } | ConvertTo-Json
+
+        try {
+            $result = $this.s1.Post('/web/api/v2.0/threats/mark-as-benign', $body)
+            return $true
+        } catch {
+            $_.Exception.Message
+            return $false
+        }
+
+    }
+
+    [boolean]Quarantine() {
+        $body = @{
+            "filter" = @{
+                "ids" = @($this.id);
+                "contentHash"=$this.fileContentHash;
+            }
+        } | ConvertTo-Json
+        
+
+        try {
+            $result = $this.s1.Post('/web/api/v2.0/threats/mitigate/quarantine', $body)
+            return $true
+        } catch {
+            $_.Exception.Message
+            return $false
+        }
+    }
+
+    [boolean]Unquarantine() {
+        $body = @{
+            "filter" = @{
+                "ids" = @($this.id);
+                "contentHash"=$this.fileContentHash;
+            }
+        } | ConvertTo-Json
+        
+
+        try {
+            $result = $this.s1.Post('/web/api/v2.0/threats/mitigate/un-quarantine', $body)
+            return $true
+        } catch {
+            $_.Exception.Message
+            return $false
+        }
+    }
+
 }
 
 
@@ -330,34 +428,55 @@ class S1Agent {
 
 }
 
-function Get-S1Agents($Name) {
-    $agents = @()
-    $agentData = $s1.Get('/web/api/v2.0/agents?computerName__like='+$Name)
-    $agentData | % {
-        $agents += [S1Agent]::new($s1, $_)
-    }
-    return $agents
-}
-
-function Get-S1Agent($AgentName) {
-    $data = $s1.Get('/web/api/v2.0/agents?computerName='+$AgentName)
-    if(!$data) {
-        Write-Host "No data returned"
-    } else {
-        return [S1Agent]::new($s1, $data)
-    }
-}
-
-function Get-S1AgentApplications($AgentName) {
-    $agent = Get-S1Agent -AgentName $AgentName
-    $agent.ListApplications()
-}
 
 $s1 = [S1API]::new("", "")
-$s1.Proxy = ""
-$s1.ProxyUseDefaultCredentials = $true
+#$s1.Proxy = ""
+#$s1.ProxyUseDefaultCredentials = $true
 
-Get-S1Agent -AgentName "DE"
+#Get-S1Agent -AgentName $env:COMPUTERNAME
+
+
+
+
+
+<# START CMDLETS #>
+
+<#
+#>
+function Get-S1Agent () {
+    [CmdletBinding()]
+    Param(
+        [Parameter()][String]$AgentName
+    )
+
+    return $s1.GetAgent($AgentName)
+}
+
+<#
+Cmdlet for iterating and pulling a large number of Agents
+Preferable to user the Cmdlets over the direct $s1.GetAgent call, it requires
+the user to put in every parameter, the Cmdlet these parameters are optional
+TODO: Put this in its own file for import
+#>
+function Get-S1Agents () {
+    [CmdletBinding()]
+    Param(
+        [Parameter()][String]$AgentName,
+        [Parameter()][Int]$Limit=25,
+        [Parameter()][Switch]$Infected=$false
+    )
+
+    return $s1.GetAgents($AgentName,$Limit, $Infected)
+}
+
+function Get-S1Threats () {
+
+    return $s1.GetThreats($false)
+}
+
+
+#Get-S1Agent -AgentName fatboy | ft computerName, lastLoggedInUserName, infected
+(Get-S1Threats).Unquarantine()
 
 
 # TODO: Test multiple agents being returned by Get-S1Agent or Get-S1Agents
